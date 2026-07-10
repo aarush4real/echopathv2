@@ -1,0 +1,16 @@
+{
+  "name": "echopath",
+  "version": "2.0.0",
+  "description": "EchoPath v2 — an AR blind-assist navigator that uses a phone or laptop camera to detect obstacles in real time and warns the user through voice and vibration.",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": ["accessibility", "blind-assist", "object-detection", "tensorflow", "coco-ssd", "navigation", "echolocation"],
+  "author": "EchoPath",
+  "license": "MIT",
+  "engines": { "node": ">=16.0.0" },
+  "dependencies": { "express": "^4.19.2" }
+}
