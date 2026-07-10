@@ -1,11 +1,7 @@
 /* ===========================================================================
-   EchoPath v2 â€” client logic
-   Runs entirely in the browser. No backend, no session summary.
-     â€¢ getUserMedia camera + TensorFlow.js / COCO-SSD detection
-     â€¢ Wall-ahead heuristic (visual uniformity)
-     â€¢ Speech Synthesis for calm spoken warnings
-     â€¢ Vibration API for haptics
-     â€¢ Speech Recognition: "EchoPath start" opens the camera, "EchoPath stop" ends it
+   EchoPath v2 â€” client logic (no backend, no session summary)
+   Camera + COCO-SSD detection, wall heuristic, speech output, haptics,
+   and robust "EchoPath start / stop" voice control.
    =========================================================================== */
 
 (() => {
@@ -35,7 +31,6 @@
   };
   const ctx = els.overlay.getContext('2d');
 
-  // Voice commands default ON so the app listens the moment you allow the mic.
   const settings = { voice: true, haptics: true, listen: true };
 
   const state = {
@@ -43,7 +38,7 @@
     lastDetectAt: 0, lastSpeakAt: 0, introSpoken: false,
     announced: new Map(),
     recognizer: null, recognizerWanted: false, recogRunning: false,
-    // Wall needs to persist a couple frames before we call it, to cut false alarms.
+    restartTimer: null, micPrimed: false,
     wallStreak: 0
   };
 
@@ -98,6 +93,11 @@
   }
   function announceStatus(text) { els.statusRegion.textContent = text; }
 
+  /* ---------- Mic indicator (shown on BOTH screens while listening) ---------- */
+  function updateMicIndicator() {
+    els.micIndicator.hidden = !(state.recognizerWanted && state.recogRunning);
+  }
+
   /* ---------- Toggles ---------- */
   function bindToggle(el, key, onChange) {
     el.addEventListener('click', () => {
@@ -110,7 +110,7 @@
   bindToggle(els.toggleHaptic, 'haptics');
   bindToggle(els.toggleListen, 'listen', (on) => {
     els.voiceHint.hidden = !on;
-    if (on) startRecognition(); else stopRecognition();
+    if (on) primeAndListen(); else stopRecognition();
   });
 
   /* ---------- Camera ---------- */
@@ -166,15 +166,10 @@
     return 'center';
   }
 
-  /* ---------- Wall heuristic (loosened + streak-confirmed) ----------
-     A flat surface up close fills the center with a large, low-detail,
-     uniform region. We downsample the central area and measure luminance
-     spread. Low spread + reasonable brightness = a wall filling the view.
-     We require it to hold for a few consecutive frames to avoid flicker. */
+  /* ---------- Wall heuristic ---------- */
   const wallCanvas = document.createElement('canvas');
   wallCanvas.width = 48; wallCanvas.height = 48;
   const wallCtx = wallCanvas.getContext('2d', { willReadFrequently: true });
-
   function wallLikely() {
     const vw = els.video.videoWidth, vh = els.video.videoHeight;
     if (!vw || !vh) return false;
@@ -189,7 +184,6 @@
     }
     const mean = sum / n;
     const stdDev = Math.sqrt(Math.max(0, sumSq / n - mean * mean));
-    // Loosened: most indoor/outdoor walls read stdDev ~10-28 up close.
     return stdDev < 26 && mean > 28 && mean < 245;
   }
 
@@ -289,18 +283,11 @@
         if (p.score < CONFIDENCE_MIN || !RELEVANT.has(p.class)) return;
         items.push({ class: p.class, label: p.class, tier: tierFor(p.bbox, t.vw, t.vh), position: positionFor(p.bbox, t.vw), bbox: p.bbox, key: p.class });
       });
-
-      // Wall check: skip if a real close object already explains the view.
       const hasCloseCenter = items.some((i) => i.tier === 'close' && i.position === 'center');
-      if (!hasCloseCenter && wallLikely()) {
-        state.wallStreak++;
-      } else {
-        state.wallStreak = 0;
-      }
+      if (!hasCloseCenter && wallLikely()) state.wallStreak++; else state.wallStreak = 0;
       if (state.wallStreak >= 3) {
         items.push({ class: 'wall', label: 'wall', tier: 'close', position: 'center', bbox: [t.vw * 0.2, t.vh * 0.15, t.vw * 0.6, t.vh * 0.7], key: 'wall' });
       }
-
       drawDetections(items, t);
       handleAlerts(items);
     }
@@ -339,9 +326,14 @@
     announceStatus('Guidance stopped.');
   }
 
-  /* ---------- Voice commands ----------
-     "EchoPath start" -> opens camera / guidance.
-     "EchoPath stop"  -> stops and returns to the start screen. */
+  /* =========================================================================
+     VOICE COMMANDS â€” robust version
+     -------------------------------------------------------------------------
+     Mobile Chrome kills recognition after every phrase and ignores
+     `continuous`. The fix: treat every stop as expected and immediately
+     restart. We also prime the mic with a real getUserMedia({audio}) call on
+     first tap so the permission prompt fires reliably, then release it.
+     ========================================================================= */
   function speechSupported() {
     return 'SpeechRecognition' in window || 'webkitSpeechRecognition' in window;
   }
@@ -349,65 +341,105 @@
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) return null;
     const r = new SR();
-    r.continuous = true; r.interimResults = true; r.lang = 'en-US';
+    r.continuous = true;      // honored on desktop; mobile falls back to restart loop
+    r.interimResults = true;  // catch the phrase as early as possible
+    r.lang = 'en-US';
+    r.maxAlternatives = 3;
     return r;
   }
+
   function handleTranscript(raw) {
-    // Normalize: strip spaces so "echo path", "echopath", "eco path" all match.
-    const heard = raw.toLowerCase();
-    const squished = heard.replace(/\s+/g, '');
-    const hasWake = /(echo?pa?th|ecopath|echopath|echopat)/.test(squished);
+    const heard = (raw || '').toLowerCase();
+    const squished = heard.replace(/[^a-z]/g, '');
+    // Accept common mishears of the wake word.
+    const hasWake = /(echopath|echopat|ecopath|ekopath|echopass|echobath|echopod)/.test(squished)
+      || (/(echo|eco|ekko)/.test(squished) && /(path|pat|bath|pass)/.test(squished));
     if (!hasWake) return;
-    if (/(stop|end|pause|halt)/.test(heard)) {
+    if (/(stop|end|pause|halt|close)/.test(heard)) {
       if (state.running) stopGuiding();
-    } else if (/(start|begin|go|open|guide)/.test(heard)) {
+    } else if (/(start|begin|go|open|guide|on)/.test(heard)) {
       if (!state.running) startGuiding();
     }
   }
-  function startRecognition() {
+
+  // Prime the microphone permission with a direct request, then hand off to
+  // the recognizer. Solves the "nothing happens" case on first load.
+  async function primeAndListen() {
     if (!speechSupported()) {
-      speak('Voice commands are not supported in this browser. Try Chrome.');
+      speak('Voice commands need Chrome. Please use Chrome to talk to EchoPath.');
       els.toggleListen.setAttribute('aria-checked', 'false');
       settings.listen = false; els.voiceHint.hidden = true;
       return;
     }
+    if (!state.micPrimed && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mic.getTracks().forEach((t) => t.stop()); // release immediately; SR opens its own
+        state.micPrimed = true;
+      } catch (e) {
+        speak('Microphone was blocked. Allow the mic in your browser to use voice commands.');
+        els.toggleListen.setAttribute('aria-checked', 'false');
+        settings.listen = false; els.voiceHint.hidden = true;
+        return;
+      }
+    }
+    startRecognition();
+  }
+
+  function startRecognition() {
+    if (!speechSupported()) return;
     state.recognizerWanted = true;
-    els.micIndicator.hidden = false;
-    if (state.recognizer && state.recogRunning) return;
+    if (state.recogRunning) { updateMicIndicator(); return; }
 
     const r = getRecognition();
     state.recognizer = r;
 
-    r.onstart = () => { state.recogRunning = true; };
+    r.onstart = () => { state.recogRunning = true; updateMicIndicator(); };
     r.onresult = (event) => {
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        handleTranscript(event.results[i][0].transcript);
+        const res = event.results[i];
+        for (let a = 0; a < res.length; a++) handleTranscript(res[a].transcript);
       }
     };
     r.onend = () => {
       state.recogRunning = false;
-      // Chrome auto-stops periodically; restart while the user still wants it.
-      if (state.recognizerWanted) { try { r.start(); } catch (e) {} }
+      updateMicIndicator();
+      // Immediately relaunch if the user still wants to listen.
+      if (state.recognizerWanted) {
+        clearTimeout(state.restartTimer);
+        state.restartTimer = setTimeout(() => {
+          try { r.start(); } catch (e) {
+            // If the same instance refuses, build a fresh one.
+            state.recognizer = null;
+            startRecognition();
+          }
+        }, 250);
+      }
     };
     r.onerror = (e) => {
       state.recogRunning = false;
+      updateMicIndicator();
       if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        speak('Microphone access was blocked, so voice commands are off. Allow the mic to use them.');
+        speak('Microphone access was blocked, so voice commands are off. Allow the mic and turn them back on.');
         stopRecognition();
         els.toggleListen.setAttribute('aria-checked', 'false');
         settings.listen = false; els.voiceHint.hidden = true;
       }
-      // 'no-speech' / 'aborted' just let onend restart it.
+      // 'no-speech', 'aborted', 'network' -> let onend restart it.
     };
-    try { r.start(); } catch (e) { /* already starting */ }
-  }
-  function stopRecognition() {
-    state.recognizerWanted = false;
-    els.micIndicator.hidden = true;
-    if (state.recognizer) { try { state.recognizer.stop(); } catch (e) {} state.recognizer = null; }
-    state.recogRunning = false;
+
+    try { r.start(); } catch (e) { /* start() called too soon; onend will retry */ }
   }
 
+  function stopRecognition() {
+    state.recognizerWanted = false;
+    clearTimeout(state.restartTimer);
+    if (state.recognizer) { try { state.recognizer.abort(); } catch (e) {} state.recognizer = null; }
+    state.recogRunning = false;
+    updateMicIndicator();
+  }
+
+  // If the tab regains focus and we lost the recognizer, bring it back.
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.recognizerWanted && !state.recogRunning) startRecognition();
   });
@@ -417,15 +449,15 @@
   els.stopBtn.addEventListener('click', stopGuiding);
   window.addEventListener('resize', () => { if (state.running) fitCanvas(); });
 
-  // Speech synth + recognition both need a user gesture to unlock. On the first
-  // interaction we speak the intro AND kick off listening if the toggle is on.
   window.addEventListener('load', () => {
     setTimeout(speakIntro, 400);
     window.lucide && window.lucide.createIcons();
   });
+
+  // First user gesture unlocks audio + primes the mic so listening starts.
   window.addEventListener('pointerdown', function once() {
     speakIntro();
-    if (settings.listen) startRecognition();
+    if (settings.listen) primeAndListen();
     window.removeEventListener('pointerdown', once);
   }, { once: true });
 })();
