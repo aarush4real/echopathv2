@@ -11,30 +11,46 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body data-screen="setup">
+
   <div id="live-region" class="sr-only" aria-live="assertive" aria-atomic="true"></div>
   <div id="status-region" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
+  <!-- ===== SETUP / LANDING ===== -->
   <main id="setup" class="screen screen--setup" aria-labelledby="setup-title">
     <div class="setup__inner">
       <p class="eyebrow">EchoPath v2 · sonar navigation</p>
       <h1 id="setup-title" class="setup__title">Point your camera forward.<br />I'll tell you what's ahead.</h1>
-      <p class="setup__lede">Tap the button, hold your phone up as you walk, and listen. I'll speak up when something's close and buzz when you need to slow down. You're in control.</p>
+      <p class="setup__lede">
+        Tap the button, or just say <strong>"EchoPath start"</strong>. Hold your phone up
+        as you walk and listen. I'll speak up when something's close and buzz when you
+        need to slow down.
+      </p>
+
       <button id="start-btn" class="btn-start" type="button">
         <span class="btn-start__ring" aria-hidden="true"></span>
         <span class="btn-start__label">Start guiding</span>
       </button>
+
       <div class="toggles" role="group" aria-label="Feedback settings">
         <button id="toggle-voice" class="toggle" type="button" role="switch" aria-checked="true">
-          <i data-lucide="volume-2" aria-hidden="true"></i><span>Voice alerts</span>
+          <i data-lucide="volume-2" aria-hidden="true"></i>
+          <span>Voice alerts</span>
         </button>
         <button id="toggle-haptics" class="toggle" type="button" role="switch" aria-checked="true">
-          <i data-lucide="vibrate" aria-hidden="true"></i><span>Vibration</span>
+          <i data-lucide="vibrate" aria-hidden="true"></i>
+          <span>Vibration</span>
         </button>
-        <button id="toggle-listen" class="toggle" type="button" role="switch" aria-checked="false">
-          <i data-lucide="mic" aria-hidden="true"></i><span>Voice commands</span>
+        <button id="toggle-listen" class="toggle" type="button" role="switch" aria-checked="true">
+          <i data-lucide="mic" aria-hidden="true"></i>
+          <span>Voice commands</span>
         </button>
       </div>
-      <p class="setup__hint" id="voice-hint" hidden>Voice commands on. Say <strong>"EchoPath start"</strong> to begin and <strong>"EchoPath stop"</strong> to finish, hands-free.</p>
+
+      <p class="setup__hint" id="voice-hint">
+        Listening for commands. Say <strong>"EchoPath start"</strong> to begin and
+        <strong>"EchoPath stop"</strong> to finish, hands-free.
+      </p>
+
       <div id="loader" class="loader" hidden>
         <span class="loader__pulse" aria-hidden="true"></span>
         <span id="loader-text">Warming up the detector…</span>
@@ -42,56 +58,38 @@
     </div>
   </main>
 
+  <!-- ===== LIVE GUIDANCE ===== -->
   <main id="guidance" class="screen screen--guidance" aria-label="Live guidance" hidden>
     <video id="video" class="video" autoplay playsinline muted></video>
     <canvas id="overlay" class="overlay" aria-hidden="true"></canvas>
+
     <div id="sweep" class="sweep" aria-hidden="true">
       <div class="sweep__arc"></div>
       <div class="sweep__ring sweep__ring--1"></div>
       <div class="sweep__ring sweep__ring--2"></div>
       <div class="sweep__ring sweep__ring--3"></div>
     </div>
+
     <div class="hud hud--top">
       <div id="path-status" class="path-status path-status--clear">
         <span class="path-status__dot" aria-hidden="true"></span>
         <span id="path-status-text">You're clear to walk</span>
       </div>
       <div id="mic-indicator" class="mic-indicator" hidden>
-        <i data-lucide="mic" aria-hidden="true"></i><span>Listening</span>
+        <i data-lucide="mic" aria-hidden="true"></i>
+        <span>Listening</span>
       </div>
     </div>
+
     <div id="alert-card" class="alert-card" hidden>
       <span id="alert-text" class="alert-card__text"></span>
     </div>
+
     <div class="hud hud--bottom">
       <button id="stop-btn" class="btn-stop" type="button">
-        <i data-lucide="square" aria-hidden="true"></i><span>Stop</span>
+        <i data-lucide="square" aria-hidden="true"></i>
+        <span>Stop</span>
       </button>
-    </div>
-  </main>
-
-  <main id="summary" class="screen screen--summary" aria-labelledby="summary-title" hidden>
-    <div class="summary__inner">
-      <header class="summary__head">
-        <p class="eyebrow">Session summary</p>
-        <h2 id="summary-title" class="summary__title">Here's what came up on your walk</h2>
-        <p id="summary-count" class="summary__count"></p>
-      </header>
-      <div id="summary-list-wrap" class="summary__body">
-        <ol id="summary-list" class="log-list"></ol>
-        <div id="summary-empty" class="summary__empty" hidden>
-          <i data-lucide="check-circle" aria-hidden="true"></i>
-          <p>Nothing flagged. A clear walk from start to finish.</p>
-        </div>
-      </div>
-      <div class="summary__actions">
-        <button id="new-session-btn" class="btn-primary" type="button">
-          <i data-lucide="rotate-ccw" aria-hidden="true"></i><span>Start a new walk</span>
-        </button>
-        <button id="clear-btn" class="btn-ghost" type="button">
-          <i data-lucide="trash-2" aria-hidden="true"></i><span>Clear session</span>
-        </button>
-      </div>
     </div>
   </main>
 
